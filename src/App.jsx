@@ -7,6 +7,7 @@ import Quiz from "./pages/Quiz";
 import Results from "./pages/Results";
 import DailyLearning from "./pages/dailyLearning";
 import DailySession from "./pages/DailySession";
+import StudentProfile from "./pages/StudentProfile";
 import './App.css';
 
 export default function App() {
@@ -21,6 +22,10 @@ export default function App() {
             <ProtectedRoute><Home /></ProtectedRoute>
           } />
           
+          <Route path="/admin/student/:id" element={
+            <ProtectedRoute><StudentProfile /></ProtectedRoute>
+          } />
+
           <Route path="/daily" element={
             <ProtectedRoute><DailyLearning /></ProtectedRoute>
           } />

@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { validatePaperJSON, uploadPaperToFirestore } from "../lib/uploadPaper";
 import {
@@ -119,8 +120,7 @@ function AttemptRow({ attempt }) {
   );
 }
 
-function StudentRow({ student, studentAttempts, onStatusChange, onDelete }) {
-  const [expanded, setExpanded] = useState(false);
+function StudentRow({ student, studentAttempts, onStatusChange, onDelete, onProfile }) {
   const scores    = studentAttempts.map(a => a.score?.percentage ?? 0);
   const bestScore = scores.length ? Math.max(...scores) : null;
   const avgScore  = scores.length ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : null;
@@ -131,25 +131,34 @@ function StudentRow({ student, studentAttempts, onStatusChange, onDelete }) {
     <div style={{
       background: "#fff", border: "1px solid #eef2ee",
       borderRadius: "14px", marginBottom: "8px",
-      overflow: "hidden", transition: "box-shadow .2s",
+      overflow: "hidden",
     }}>
-      {/* main row */}
       <div style={{ display: "flex", alignItems: "flex-start", gap: "14px", padding: "16px 18px", flexWrap: "wrap" }}>
 
-        {/* avatar */}
-        <div style={{
-          width: "44px", height: "44px", borderRadius: "50%",
-          background: sc.bg, border: `1.5px solid ${sc.border}`,
-          display: "flex", alignItems: "center", justifyContent: "center",
-          fontSize: "16px", fontWeight: "800", color: sc.text, flexShrink: 0,
-        }}>
+        {/* avatar — click to open profile */}
+        <div
+          title="View profile"
+          onClick={() => onProfile(student.id)}
+          style={{
+            width: "44px", height: "44px", borderRadius: "50%",
+            background: sc.bg, border: `1.5px solid ${sc.border}`,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            fontSize: "16px", fontWeight: "800", color: sc.text, flexShrink: 0,
+            cursor: "pointer", transition: "transform .15s, box-shadow .15s",
+          }}
+          onMouseEnter={e => { e.currentTarget.style.transform = "scale(1.08)"; e.currentTarget.style.boxShadow = "0 2px 10px rgba(0,0,0,0.12)"; }}
+          onMouseLeave={e => { e.currentTarget.style.transform = "scale(1)";    e.currentTarget.style.boxShadow = "none"; }}
+        >
           {initials}
         </div>
 
         {/* info */}
         <div style={{ flex: 1, minWidth: "180px" }}>
           <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "3px", flexWrap: "wrap" }}>
-            <span style={{ fontWeight: "700", fontSize: "14px", color: "#111" }}>
+            <span
+              onClick={() => onProfile(student.id)}
+              style={{ fontWeight: "700", fontSize: "14px", color: "#111", cursor: "pointer", textDecoration: "underline", textDecorationColor: "#ddd" }}
+            >
               {student.displayName ?? "Unknown"}
             </span>
             <Badge scheme={sc}>{sc.label}</Badge>
@@ -173,41 +182,18 @@ function StudentRow({ student, studentAttempts, onStatusChange, onDelete }) {
 
         {/* actions */}
         <div style={{ display: "flex", gap: "7px", flexWrap: "wrap", alignItems: "center", paddingTop: "2px" }}>
-          {student.status === "pending"   && <Btn color="primary"  onClick={() => onStatusChange(student.id, "active")}>✓ Approve</Btn>}
-          {student.status === "active"    && <Btn color="warn"     onClick={() => onStatusChange(student.id, "suspended")}>Suspend</Btn>}
-          {student.status === "suspended" && <Btn color="success"  onClick={() => onStatusChange(student.id, "active")}>Reactivate</Btn>}
-          <Btn onClick={() => setExpanded(e => !e)}>
-            {expanded ? "▲ Hide" : "▼ History"}
-          </Btn>
+          {student.status === "pending"   && <Btn color="primary" onClick={() => onStatusChange(student.id, "active")}>✓ Approve</Btn>}
+          {student.status === "active"    && <Btn color="warn"    onClick={() => onStatusChange(student.id, "suspended")}>Suspend</Btn>}
+          {student.status === "suspended" && <Btn color="success" onClick={() => onStatusChange(student.id, "active")}>Reactivate</Btn>}
+          <Btn onClick={() => onProfile(student.id)}>View profile</Btn>
           <Btn color="danger" onClick={() => onDelete(student.id)}>✕</Btn>
         </div>
       </div>
-
-      {/* expanded history */}
-      {expanded && (
-        <div style={{ borderTop: "1px solid #f0f0f0", padding: "16px 18px", background: "#fafcfa" }}>
-          <p style={{ fontSize: "11px", fontWeight: "700", color: "#aaa", letterSpacing: "0.08em", textTransform: "uppercase", margin: "0 0 12px" }}>
-            Attempt history ({studentAttempts.length})
-          </p>
-          {studentAttempts.length === 0 ? (
-            <p style={{ fontSize: "13px", color: "#ccc", textAlign: "center", padding: "16px 0" }}>No attempts yet</p>
-          ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: "7px" }}>
-              {studentAttempts.slice(0, 8).map(a => <AttemptRow key={a.id} attempt={a} />)}
-              {studentAttempts.length > 8 && (
-                <p style={{ fontSize: "12px", color: "#bbb", textAlign: "center", margin: "4px 0 0" }}>
-                  +{studentAttempts.length - 8} more attempts
-                </p>
-              )}
-            </div>
-          )}
-        </div>
-      )}
     </div>
   );
 }
 
-function StudentsTab({ students, attempts, loading, onStatusChange, onDelete }) {
+function StudentsTab({ students, attempts, loading, onStatusChange, onDelete, onProfile }) {
   const [searchQuery,  setSearchQuery]  = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
 
@@ -283,6 +269,7 @@ function StudentsTab({ students, attempts, loading, onStatusChange, onDelete }) 
           studentAttempts={attempts[student.id] ?? []}
           onStatusChange={onStatusChange}
           onDelete={onDelete}
+          onProfile={onProfile}
         />
       ))}
     </div>
@@ -519,6 +506,7 @@ function PapersTab({ papers, onToggle, onDelete, onUploadClick }) {
 
 export default function AdminHome() {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [tab, setTab] = useState("students");
 
   const [students,        setStudents]        = useState([]);
@@ -649,6 +637,7 @@ export default function AdminHome() {
           loading={loadingStudents}
           onStatusChange={updateStudentStatus}
           onDelete={deleteStudent}
+          onProfile={id => navigate(`/admin/student/${id}`)}
         />
       )}
 
