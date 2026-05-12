@@ -5,7 +5,7 @@ import Login from "./pages/Login";
 import Home from "./pages/Home";
 import Quiz from "./pages/Quiz";
 import Results from "./pages/Results";
-import DailyLearning from "./pages/dailyLearning";
+import DailyLearning from "./pages/DailyLearning";
 import DailySession from "./pages/DailySession";
 import StudentProfile from "./pages/StudentProfile";
 import './App.css';
