@@ -4,6 +4,7 @@ import { useAuth } from "../context/AuthContext";
 import { collection, addDoc, updateDoc, doc, getDoc, serverTimestamp } from "firebase/firestore";
 import { db } from "../firebase";
 import { fetchPaperQuestions } from "../lib/uploadPaper";
+import QuestionRenderer from "../components/QuestionRenderer";
 
 const Q_PER_PART   = 30;
 const PART_MINUTES = 30;
@@ -181,8 +182,8 @@ export default function Quiz() {
             </button>
           </div>
 
-          <div style={{ background:"white", border:"1px solid #e8eee8", borderRadius:"16px", padding:"26px 30px", marginBottom:"18px" }}>
-            <p style={{ fontSize:"16px", lineHeight:"1.8", color:"#1a1a1a", fontWeight:"500", margin:0 }}>{q.text}</p>
+          <div style={{ background:"white", border:"1px solid #e8eee8", borderRadius:"16px", padding:"20px 24px", marginBottom:"18px" }}>
+            <QuestionRenderer text={q.text} />
           </div>
 
           <div style={{ display:"flex", flexDirection:"column", gap:"11px", marginBottom:"28px" }}>

@@ -4,6 +4,7 @@ import { useAuth } from "../context/AuthContext";
 import { fetchActivePapers } from "../lib/uploadPaper";
 import { collection, getDocs, query, where } from "firebase/firestore";
 import { db } from "../firebase";
+import DailyLearningCard from "./DailyLearningCard";
 
 const PARTS        = 4;
 const Q_PER_PART   = 30;
@@ -72,6 +73,7 @@ export default function StudentHome() {
 
   return (
     <div style={{fontFamily:"system-ui,-apple-system,sans-serif"}}>
+    <DailyLearningCard /> 
 
       {/* Stats banner */}
       {totalTests > 0 && (
