@@ -1,13 +1,12 @@
-// src/lib/dailyLearning.js
 import {
   doc, getDoc, setDoc, updateDoc,
   collection, getDocs, serverTimestamp,
 } from "firebase/firestore";
 import { db } from "../firebase";
 
-const QUESTIONS_PER_SESSION = 20;
-const MAX_SESSIONS_PER_DAY  = 5;
-const CYCLE_DAYS            = 30;
+export const MAX_SESSIONS_PER_DAY = 5;
+export const QUESTIONS_PER_SESSION = 20;
+export const CYCLE_DAYS = 30;
 
 export function todayString() {
   return new Date().toISOString().split("T")[0];
@@ -42,181 +41,142 @@ export async function fetchAllActiveQuestions() {
   return allQuestions;
 }
 
-// ── Main entry point ──────────────────────────────────────────────────────────
-export async function getDailySession(userId) {
-  const ref   = doc(db, "dailyLearning", userId);
-  const snap  = await getDoc(ref);
-  const today = todayString();
-  const allQs = await fetchAllActiveQuestions();
+// Build 5 session slot objects, each assigned 20 unique question IDs
+function buildDaySessions(allQs, alreadySeen) {
+  const allIds = allQs.map(q => q.id);
+  let pool = shuffle(allIds.filter(id => !alreadySeen.includes(id)));
+  const needed = MAX_SESSIONS_PER_DAY * QUESTIONS_PER_SESSION;
 
-  if (allQs.length === 0) {
-    return { error: "No questions available yet. Admin needs to upload papers." };
+  if (pool.length < needed) {
+    const extra = shuffle([...alreadySeen]).slice(0, needed - pool.length);
+    pool = [...pool, ...extra];
   }
 
-  // ── Existing doc ────────────────────────────────────────────────────────────
-  if (snap.exists()) {
-    const data = snap.data();
-
-    // Check 30-day cycle reset
-    const cycleStart = data.cycleStartDate?.toDate?.() ?? new Date();
-    const daysSince  = Math.floor((Date.now() - cycleStart.getTime()) / 86400000);
-    if (daysSince >= CYCLE_DAYS) {
-      return await startNewCycle(ref, userId, allQs, data.currentCycle ?? 1);
-    }
-
-    // Same day
-    if (data.lastSeenDate === today) {
-      const sessionsToday = data.sessionsToday ?? 1;
-      const allDone       = sessionsToday >= MAX_SESSIONS_PER_DAY;
-
-      const todayQs = await loadQuestionsById(data.todayQuestionIds ?? [], allQs);
-      return {
-        session:        data,
-        todayQuestions: todayQs,
-        totalAvailable: allQs.length,
-        seenCount:      (data.seenQuestionIds ?? []).length,
-        cycleDay:       daysSince + 1,
-        cycleDays:      CYCLE_DAYS,
-        sessionsToday,
-        maxSessions:    MAX_SESSIONS_PER_DAY,
-        allSessionsDone: allDone,
-      };
-    }
-
-    // New day — reset daily sessions
-    return await assignNewDay(ref, data, allQs, today, daysSince);
-  }
-
-  // ── First time ──────────────────────────────────────────────────────────────
-  return await startNewCycle(ref, userId, allQs, 0);
+  return Array.from({ length: MAX_SESSIONS_PER_DAY }, (_, i) => ({
+    questionIds: pool.slice(i * QUESTIONS_PER_SESSION, (i + 1) * QUESTIONS_PER_SESSION),
+    answers:     {},
+    completed:   false,
+    score:       null,
+  }));
 }
 
-// ── Start a new session (called when student clicks "Start next session") ─────
-export async function startNextSession(userId) {
-  const ref   = doc(db, "dailyLearning", userId);
-  const snap  = await getDoc(ref);
-  const today = todayString();
-  const allQs = await fetchAllActiveQuestions();
+export async function getTodaySessions(userId) {
+  try {
+    const ref   = doc(db, "dailyLearning", userId);
+    const snap  = await getDoc(ref);
+    const today = todayString();
+    const allQs = await fetchAllActiveQuestions();
 
-  if (!snap.exists()) return { error: "Session not found." };
+    if (allQs.length === 0) {
+      return { error: "No questions available yet. Admin needs to upload papers." };
+    }
 
-  const data          = snap.data();
-  const sessionsToday = (data.sessionsToday ?? 1) + 1;
+    if (snap.exists()) {
+      const data = snap.data();
+      const cycleStart = data.cycleStartDate?.toDate?.() ?? new Date();
+      const daysSince  = Math.floor((Date.now() - cycleStart.getTime()) / 86400000);
 
-  if (sessionsToday > MAX_SESSIONS_PER_DAY) {
-    return { error: "Max sessions for today reached." };
+      if (daysSince >= CYCLE_DAYS) {
+        return await startNewCycle(ref, userId, allQs, data.currentCycle ?? 1);
+      }
+
+      if (data.lastSeenDate === today) {
+        let sessions = data.sessions ?? [];
+
+        // Build sessions if missing or incomplete (handles old data migration)
+        if (sessions.length < MAX_SESSIONS_PER_DAY) {
+          sessions = buildDaySessions(allQs, data.seenQuestionIds ?? []);
+          const newSeen = [...new Set([
+            ...(data.seenQuestionIds ?? []),
+            ...sessions.flatMap(s => s.questionIds),
+          ])];
+          await updateDoc(ref, { sessions, seenQuestionIds: newSeen });
+        }
+
+        return {
+          sessions,
+          progress:  data,
+          totalQs:   allQs.length,
+          cycleDay:  daysSince + 1,
+          cycleDays: CYCLE_DAYS,
+        };
+      }
+
+      return await assignNewDay(ref, data, allQs, today, daysSince);
+    }
+
+    return await startNewCycle(ref, userId, allQs, 0);
+
+  } catch (err) {
+    console.error("Error in getTodaySessions:", err);
+    return { error: "Failed to load learning data." };
   }
+}
 
-  const seen   = data.seenQuestionIds ?? [];
-  const allIds = allQs.map(q => q.id);
-  let unseen   = allIds.filter(id => !seen.includes(id));
+async function startNewCycle(ref, userId, allQs, prevCycle) {
+  const today    = todayString();
+  const sessions = buildDaySessions(allQs, []);
+  const seenIds  = sessions.flatMap(s => s.questionIds);
 
-  if (unseen.length < QUESTIONS_PER_SESSION) {
-    const extra = shuffle(seen).slice(0, QUESTIONS_PER_SESSION - unseen.length);
-    unseen = [...unseen, ...extra];
-  }
+  const newData = {
+    userId,
+    currentCycle:    prevCycle + 1,
+    cycleStartDate:  serverTimestamp(),
+    lastSeenDate:    today,
+    seenQuestionIds: seenIds,
+    streak:          1,
+    sessions,
+    updatedAt:       serverTimestamp(),
+  };
 
-  const todayIds = shuffle(unseen).slice(0, QUESTIONS_PER_SESSION);
-  const newSeen  = [...new Set([...seen, ...todayIds])];
-
-  await updateDoc(ref, {
-    todayQuestionIds: todayIds,
-    todayCompleted:   false,
-    sessionsToday,
-    seenQuestionIds:  newSeen,
-  });
-
-  const todayQs = await loadQuestionsById(todayIds, allQs);
+  await setDoc(ref, newData);
   return {
-    session:        { ...data, sessionsToday, todayQuestionIds: todayIds },
-    todayQuestions: todayQs,
-    totalAvailable: allQs.length,
-    seenCount:      newSeen.length,
-    cycleDay:       data.cycleDay ?? 1,
-    cycleDays:      CYCLE_DAYS,
-    sessionsToday,
-    maxSessions:    MAX_SESSIONS_PER_DAY,
-    allSessionsDone: sessionsToday >= MAX_SESSIONS_PER_DAY,
+    sessions,
+    progress:  newData,
+    totalQs:   allQs.length,
+    cycleDay:  1,
+    cycleDays: CYCLE_DAYS,
   };
 }
 
 async function assignNewDay(ref, data, allQs, today, daysSince) {
-  const seen   = data.seenQuestionIds ?? [];
-  const allIds = allQs.map(q => q.id);
-  let unseen   = allIds.filter(id => !seen.includes(id));
+  const sessions = buildDaySessions(allQs, data.seenQuestionIds ?? []);
+  const newSeen  = [...new Set([
+    ...(data.seenQuestionIds ?? []),
+    ...sessions.flatMap(s => s.questionIds),
+  ])];
 
-  if (unseen.length < QUESTIONS_PER_SESSION) {
-    const extra = shuffle(seen).slice(0, QUESTIONS_PER_SESSION - unseen.length);
-    unseen = [...unseen, ...extra];
-  }
+  const update = {
+    lastSeenDate:    today,
+    seenQuestionIds: newSeen,
+    streak:          (data.streak ?? 0) + 1,
+    sessions,
+  };
 
-  const todayIds = shuffle(unseen).slice(0, QUESTIONS_PER_SESSION);
-
-  await updateDoc(ref, {
-    lastSeenDate:     today,
-    todayQuestionIds: todayIds,
-    todayCompleted:   false,
-    sessionsToday:    1,                          // reset to 1 each new day
-    seenQuestionIds:  [...new Set([...seen, ...todayIds])],
-    streak:           (data.streak ?? 0) + 1,
-  });
-
-  const todayQs = await loadQuestionsById(todayIds, allQs);
+  await updateDoc(ref, update);
   return {
-    session:        { ...data, lastSeenDate: today, todayQuestionIds: todayIds, sessionsToday: 1 },
-    todayQuestions: todayQs,
-    totalAvailable: allQs.length,
-    seenCount:      [...new Set([...(data.seenQuestionIds ?? []), ...todayIds])].length,
-    cycleDay:       daysSince + 1,
-    cycleDays:      CYCLE_DAYS,
-    sessionsToday:  1,
-    maxSessions:    MAX_SESSIONS_PER_DAY,
-    allSessionsDone: false,
+    sessions,
+    progress:  { ...data, ...update },
+    totalQs:   allQs.length,
+    cycleDay:  daysSince + 1,
+    cycleDays: CYCLE_DAYS,
   };
 }
 
-async function startNewCycle(ref, userId, allQs, prevCycle) {
-  const today   = todayString();
-  const todayIds = shuffle(allQs.map(q => q.id)).slice(0, QUESTIONS_PER_SESSION);
-
-  const newData = {
-    userId, currentCycle: prevCycle + 1,
-    cycleStartDate: serverTimestamp(),
-    lastSeenDate:   today,
-    todayQuestionIds: todayIds,
-    todayCompleted:   false,
-    sessionsToday:    1,
-    seenQuestionIds:  todayIds,
-    streak:           1,
-    updatedAt:        serverTimestamp(),
-  };
-
-  await setDoc(ref, newData);
-  const todayQs = await loadQuestionsById(todayIds, allQs);
-  return {
-    session:        newData,
-    todayQuestions: todayQs,
-    totalAvailable: allQs.length,
-    seenCount:      todayIds.length,
-    cycleDay:       1,
-    cycleDays:      CYCLE_DAYS,
-    sessionsToday:  1,
-    maxSessions:    MAX_SESSIONS_PER_DAY,
-    allSessionsDone: false,
-  };
+// Save answers mid-session (called on each answer)
+export async function saveSessionAnswers(userId, sessionIndex, answers) {
+  const ref  = doc(db, "dailyLearning", userId);
+  const snap = await getDoc(ref);
+  const sessions = [...(snap.data().sessions ?? [])];
+  sessions[sessionIndex] = { ...sessions[sessionIndex], answers };
+  await updateDoc(ref, { sessions });
 }
 
-export async function markSessionComplete(userId) {
-  await updateDoc(doc(db, "dailyLearning", userId), {
-    todayCompleted: true,
-  });
-}
-
-// kept for backward compat
-export const markDayComplete = markSessionComplete;
-
-function loadQuestionsById(ids, allQs) {
-  const map = {};
-  allQs.forEach(q => { map[q.id] = q; });
-  return ids.map(id => map[id]).filter(Boolean);
+// Mark session complete with final score
+export async function completeSession(userId, sessionIndex, answers, score) {
+  const ref  = doc(db, "dailyLearning", userId);
+  const snap = await getDoc(ref);
+  const sessions = [...(snap.data().sessions ?? [])];
+  sessions[sessionIndex] = { ...sessions[sessionIndex], answers, completed: true, score };
+  await updateDoc(ref, { sessions });
 }
